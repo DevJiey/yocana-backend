@@ -1,4 +1,7 @@
 const nodemailer = require("nodemailer");
+const dns = require("node:dns");
+
+dns.setDefaultResultOrder("ipv4first");
 
 const transporter = nodemailer.createTransport({
     host: process.env.EMAIL_HOST,
