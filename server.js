@@ -54,8 +54,21 @@ const authLimiter = rateLimit({
         message: "Too many authentication attempts. Please try again later.",
     },
 });
+
+const passwordResetLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 5,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    message: {
+        success: false,
+        message: "Too many password reset attempts. Please try again later.",
+    },
+});
 app.use("/api/auth/login", authLimiter);
 app.use("/api/auth/register", authLimiter);
+app.use("/api/auth/forgot-password", passwordResetLimiter);
+app.use("/api/auth/reset-password", passwordResetLimiter);
 app.use("/api/auth", authRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/inventory", inventoryRoutes);

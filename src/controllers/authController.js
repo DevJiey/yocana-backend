@@ -3,21 +3,74 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const { sendEmail } = require("../services/emailService");
+const escapeHtml = (value = "") => {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+};
 
 const register = async (req, res) => {
     try {
-        const { first_name, last_name, email, password, phone } = req.body;
+        const {
+            first_name,
+            last_name,
+            email,
+            password,
+            phone,
+        } = req.body || {};
 
-        if (!first_name || !last_name || !email || !password) {
+        const firstName = first_name?.trim();
+        const lastName = last_name?.trim();
+        const normalizedEmail = email?.trim().toLowerCase();
+        const normalizedPhone = phone?.trim() || null;
+
+        if (!firstName || !lastName || !normalizedEmail || !password) {
             return res.status(400).json({
                 success: false,
                 message: "Please fill in all required fields",
             });
         }
 
+        if (firstName.length > 100 || lastName.length > 100) {
+            return res.status(400).json({
+                success: false,
+                message: "First name and last name must not exceed 100 characters",
+            });
+        }
+
+        const emailRegex =
+            /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+        if (
+            normalizedEmail.length > 255 ||
+            !emailRegex.test(normalizedEmail)
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Please provide a valid email address",
+            });
+        }
+
+        if (password.length < 8 || password.length > 128) {
+            return res.status(400).json({
+                success: false,
+                message: "Password must be between 8 and 128 characters",
+            });
+        }
+
+        if (normalizedPhone && normalizedPhone.length > 30) {
+            return res.status(400).json({
+                success: false,
+                message: "Phone number must not exceed 30 characters",
+            });
+        }
+
         const existingUser = await pool.query(
-            "SELECT id FROM users WHERE email = $1",
-            [email]
+            "SELECT id FROM users WHERE LOWER(email) = $1",
+            [normalizedEmail]
         );
 
         if (existingUser.rows.length > 0) {
@@ -34,7 +87,13 @@ const register = async (req, res) => {
             (first_name, last_name, email, password_hash, phone)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING id, first_name, last_name, email, phone, role, created_at`,
-            [first_name, last_name, email, passwordHash, phone || null]
+            [
+                firstName,
+                lastName,
+                normalizedEmail,
+                passwordHash,
+                normalizedPhone,
+            ]
         );
 
         res.status(201).json({
@@ -55,7 +114,9 @@ const login = async (req, res) => {
     try {
         const { email, password } = req.body;
 
-        if (!email || !password) {
+        const normalizedEmail = email?.trim().toLowerCase();
+
+        if (!normalizedEmail || !password) {
             return res.status(400).json({
                 success: false,
                 message: "Email and password are required",
@@ -63,8 +124,8 @@ const login = async (req, res) => {
         }
 
         const result = await pool.query(
-            "SELECT * FROM users WHERE email = $1",
-            [email]
+            "SELECT * FROM users WHERE LOWER(email) = $1",
+            [normalizedEmail]
         );
 
         if (result.rows.length === 0) {
@@ -106,6 +167,7 @@ const login = async (req, res) => {
             {
                 id: user.id,
                 role: user.role,
+                token_version: user.token_version,
             },
             process.env.JWT_SECRET,
             {
@@ -188,6 +250,23 @@ const updateMe = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: "First name and last name are required",
+            })
+        }
+
+        if (
+            first_name.trim().length > 100 ||
+            last_name.trim().length > 100
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "First name and last name must not exceed 100 characters",
+            })
+        }
+
+        if (phone?.trim() && phone.trim().length > 30) {
+            return res.status(400).json({
+                success: false,
+                message: "Phone number must not exceed 30 characters",
             })
         }
 
@@ -301,12 +380,15 @@ const forgotPassword = async (req, res) => {
 
         const resetUrl =
             `${frontendUrl}/reset-password/${resetToken}`;
+        const safeFirstName = escapeHtml(
+            user.first_name || "there"
+        );
 
         const emailResult = await sendEmail({
             to: user.email,
             subject: "Reset your YOCANA password",
             text:
-                `Hello ${user.first_name || "there"},\n\n` +
+                `Hello ${safeFirstName},\n\n` +
                 `Reset your YOCANA password using this link:\n${resetUrl}\n\n` +
                 `This link expires in 15 minutes.\n\n` +
                 `If you did not request this, you can ignore this email.`,
@@ -354,11 +436,7 @@ const forgotPassword = async (req, res) => {
                 [user.id]
             );
 
-            return res.status(500).json({
-                success: false,
-                message:
-                    "Unable to send password reset email. Please try again later.",
-            });
+            return res.json(genericResponse);
         }
 
         return res.json(genericResponse);
@@ -378,6 +456,13 @@ const resetPassword = async (req, res) => {
         const { token } = req.params;
         const { password } = req.body || {};
 
+        if (!/^[a-f0-9]{64}$/i.test(token)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid or expired reset token.",
+            });
+        }
+
         if (!token) {
             return res.status(400).json({
                 success: false,
@@ -392,11 +477,10 @@ const resetPassword = async (req, res) => {
             });
         }
 
-        if (password.length < 8) {
+        if (password.length < 8 || password.length > 128) {
             return res.status(400).json({
                 success: false,
-                message:
-                    "Password must be at least 8 characters long",
+                message: "Password must be between 8 and 128 characters",
             });
         }
 
@@ -432,10 +516,11 @@ const resetPassword = async (req, res) => {
         await pool.query(
             `UPDATE users
              SET password_hash = $1,
-                 password_reset_token = NULL,
-                 password_reset_expires = NULL,
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = $2`,
+                password_reset_token = NULL,
+                password_reset_expires = NULL,
+                token_version = token_version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $2`,
             [passwordHash, userId]
         );
 

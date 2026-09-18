@@ -42,12 +42,16 @@ router.post(
     initializeOnlinePayment
 );
 
-router.patch(
-    "/admin/:id/simulate-online-success",
-    authMiddleware,
-    authorizeRoles("admin"),
-    simulateOnlinePaymentSuccess
-);
+// Development-only payment simulator.
+// This route is intentionally not registered in production.
+if (process.env.NODE_ENV !== "production") {
+    router.patch(
+        "/admin/:id/simulate-online-success",
+        authMiddleware,
+        authorizeRoles("admin"),
+        simulateOnlinePaymentSuccess
+    );
+}
 
 router.get(
     "/admin",
