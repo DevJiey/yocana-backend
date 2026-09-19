@@ -29,6 +29,7 @@ const reportRoutes = require("./src/routes/reportRoutes");
 app.use(helmet());
 const allowedOrigins = [
     "http://localhost:5173",
+     "http://localhost:8080",
     process.env.FRONTEND_URL,
 ].filter(Boolean);
 
