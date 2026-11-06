@@ -208,6 +208,7 @@ const getMe = async (req, res) => {
                 phone,
                 role,
                 auth_provider,
+                (google_id IS NOT NULL) AS google_linked,
                 is_active,
                 created_at
              FROM users
@@ -286,6 +287,7 @@ const updateMe = async (req, res) => {
                 phone,
                 role,
                 auth_provider,
+                (google_id IS NOT NULL) AS google_linked,
                 is_active,
                 created_at,
                 updated_at`,

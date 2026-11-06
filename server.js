@@ -67,6 +67,7 @@ const passwordResetLimiter = rateLimit({
     },
 });
 app.use("/api/auth/login", authLimiter);
+app.use("/api/auth/google", authLimiter);
 app.use("/api/auth/register", authLimiter);
 app.use("/api/auth/forgot-password", passwordResetLimiter);
 app.use("/api/auth/reset-password", passwordResetLimiter);

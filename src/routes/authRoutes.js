@@ -7,6 +7,8 @@ const {
     forgotPassword,
     resetPassword,
 } = require("../controllers/authController");
+const { linkGoogle } = require("../controllers/googleLinkController");
+const { googleLogin } = require("../controllers/googleAuthController");
 const authMiddleware = require("../middleware/authMiddleware");
 const authorizeRoles = require("../middleware/roleMiddleware");
 
@@ -14,6 +16,13 @@ const router = express.Router();
 
 router.post("/register", register);
 router.post("/login", login);
+router.post("/google", googleLogin);
+router.post(
+    "/google/link",
+    authMiddleware,
+    authorizeRoles("customer"),
+    linkGoogle
+);
 router.post("/forgot-password", forgotPassword);
 router.post("/reset-password/:token", resetPassword);
 router.get("/me", authMiddleware, getMe);
