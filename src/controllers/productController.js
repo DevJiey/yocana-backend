@@ -11,6 +11,7 @@ const getProducts = async (req, res) => {
                 category,
                 size_ml,
                 price,
+                original_price,
                 image_url,
                 is_active,
                 created_at

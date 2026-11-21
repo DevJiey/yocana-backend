@@ -8,6 +8,8 @@ const {
     simulateOnlinePaymentSuccess,
     getAdminPaymentByOrderId,
     getAdminPayments,
+    submitPaymentReference,
+    confirmOnlinePayment,
 } = require("../controllers/paymentController");
 const authMiddleware = require("../middleware/authMiddleware");
 const authorizeRoles = require("../middleware/roleMiddleware");
@@ -28,11 +30,25 @@ router.get(
     getMyPayment
 );
 
+router.post(
+    "/order/:orderId/submit-reference",
+    authMiddleware,
+    authorizeRoles("customer"),
+    submitPaymentReference
+);
+
 router.patch(
     "/admin/:id/confirm-cod",
     authMiddleware,
     authorizeRoles("admin"),
     confirmCodPayment
+);
+
+router.patch(
+    "/admin/:id/confirm-online",
+    authMiddleware,
+    authorizeRoles("admin"),
+    confirmOnlinePayment
 );
 
 router.post(

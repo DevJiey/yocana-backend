@@ -191,10 +191,16 @@ const createOrder = async (req, res) => {
             ? "Metro Manila"
             : "Provincial";
 
+        const totalQuantity = cartResult.rows.reduce(
+            (total, item) => total + Number(item.quantity || 1),
+            0
+        );
+
+        // 2 bottles or more (or orders >= ₱2,998) gets FREE SHIPPING (₱0); otherwise Flat ₱50 nationwide
         const shippingFee =
-            shippingRegion === "Metro Manila"
-                ? 100
-                : 180;
+            totalQuantity >= 2 || subtotal >= 2998
+                ? 0
+                : 50;
 
         const discountAmount = 0;
 
@@ -227,10 +233,17 @@ const createOrder = async (req, res) => {
                 payment_status,
                 order_status,
                 shipping_address,
-                shipping_region
+                shipping_region,
+                recipient_name,
+                recipient_phone,
+                shipping_address_line,
+                shipping_barangay,
+                shipping_city,
+                shipping_province,
+                shipping_postal_code
             )
             VALUES
-            ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+            ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
             RETURNING *`,
             [
                 orderNumber,
@@ -243,7 +256,14 @@ const createOrder = async (req, res) => {
                 initialPaymentStatus,
                 "pending",
                 shippingAddress,
-                shippingRegion
+                shippingRegion,
+                selectedAddress.recipient_name || null,
+                selectedAddress.phone || null,
+                selectedAddress.address_line || null,
+                selectedAddress.barangay || null,
+                selectedAddress.city || null,
+                selectedAddress.province || null,
+                selectedAddress.postal_code || null,
             ]
         );
 
@@ -366,21 +386,40 @@ const getMyOrders = async (req, res) => {
 
         const result = await pool.query(
             `SELECT
-                id,
-                order_number,
-                subtotal,
-                shipping_fee,
-                discount_amount,
-                total_amount,
-                payment_method,
-                payment_status,
-                order_status,
-                shipping_address,
-                shipping_region,
-                created_at
-             FROM orders
-             WHERE user_id = $1
-             ORDER BY created_at DESC`,
+                o.id,
+                o.order_number,
+                o.subtotal,
+                o.shipping_fee,
+                o.discount_amount,
+                o.total_amount,
+                o.payment_method,
+                o.payment_status,
+                o.order_status,
+                o.shipping_address,
+                o.shipping_region,
+                o.created_at,
+                COALESCE(
+                    (
+                        SELECT json_agg(
+                            json_build_object(
+                                'id', oi.id,
+                                'product_id', oi.product_id,
+                                'product_name', oi.product_name,
+                                'price', oi.price,
+                                'quantity', oi.quantity,
+                                'subtotal', oi.subtotal,
+                                'image_url', p.image_url
+                            ) ORDER BY oi.id ASC
+                        )
+                        FROM order_items oi
+                        LEFT JOIN products p ON p.id = oi.product_id
+                        WHERE oi.order_id = o.id
+                    ),
+                    '[]'::json
+                ) AS items
+             FROM orders o
+             WHERE o.user_id = $1
+             ORDER BY o.created_at DESC`,
             [userId]
         );
 
@@ -653,6 +692,10 @@ const updateOrderStatus = async (req, res) => {
             });
         }
 
+        let finalCourierName = courier_name ? String(courier_name).trim() : null;
+        let finalTrackingNumber = tracking_number ? String(tracking_number).trim() : null;
+        let finalTrackingUrl = tracking_url ? String(tracking_url).trim() : null;
+
         if (order_status === "shipped") {
             const cancellationResult = await client.query(
                 `SELECT id
@@ -671,13 +714,30 @@ const updateOrderStatus = async (req, res) => {
                 });
             }
 
-            if (!courier_name || !tracking_number) {
+            if (!finalTrackingNumber) {
                 await client.query("ROLLBACK");
 
                 return res.status(400).json({
                     success: false,
-                    message: "Courier and tracking number are required when shipping an order",
+                    message: "Tracking number is required when shipping an order",
                 });
+            }
+
+            // Default to SPX Express if courier is omitted
+            if (!finalCourierName) {
+                finalCourierName = "SPX Express";
+            }
+
+            // Auto-generate tracking URL if not provided
+            if (!finalTrackingUrl) {
+                const lowerCourier = finalCourierName.toLowerCase();
+                if (lowerCourier.includes("spx") || lowerCourier.includes("shopee")) {
+                    finalTrackingUrl = `https://spx.ph/?tracking_number=${encodeURIComponent(finalTrackingNumber)}`;
+                } else if (lowerCourier.includes("j&t") || lowerCourier.includes("jt")) {
+                    finalTrackingUrl = `https://www.jtexpress.ph/trajectoryQuery?bills=${encodeURIComponent(finalTrackingNumber)}`;
+                } else if (lowerCourier.includes("flash")) {
+                    finalTrackingUrl = `https://www.flashexpress.ph/fle/tracking?se=${encodeURIComponent(finalTrackingNumber)}`;
+                }
             }
 
             if (
@@ -717,9 +777,9 @@ const updateOrderStatus = async (req, res) => {
              RETURNING *`,
             [
                 order_status,
-                courier_name || null,
-                tracking_number || null,
-                tracking_url || null,
+                finalCourierName || null,
+                finalTrackingNumber || null,
+                finalTrackingUrl || null,
                 shippedAt,
                 deliveredAt,
                 parsedOrderId
@@ -729,8 +789,8 @@ const updateOrderStatus = async (req, res) => {
         let historyNote = null;
 
         if (order_status === "shipped") {
-            historyNote = courier_name
-                ? `Order shipped via ${courier_name}`
+            historyNote = finalCourierName
+                ? `Order shipped via ${finalCourierName}`
                 : "Order shipped";
         }
 
@@ -763,16 +823,16 @@ const updateOrderStatus = async (req, res) => {
                     text:
                         `Hi ${order.first_name}, your YOCANA order ` +
                         `${order.order_number} has been shipped. ` +
-                        `Courier: ${courier_name}. ` +
-                        `Tracking Number: ${tracking_number}.`,
+                        `Courier: ${finalCourierName}. ` +
+                        `Tracking Number: ${finalTrackingNumber}.`,
 
                     html: orderShippedTemplate({
                         customer: order,
                         order: {
                             ...order,
-                            courier_name,
-                            tracking_number,
-                            tracking_url,
+                            courier_name: finalCourierName,
+                            tracking_number: finalTrackingNumber,
+                            tracking_url: finalTrackingUrl,
                         },
                     }),
                 }).catch((error) => {

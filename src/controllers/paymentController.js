@@ -798,6 +798,179 @@ const getAdminPayments = async (req, res) => {
     }
 }
 
+const submitPaymentReference = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { orderId } = req.params;
+        const { reference_number } = req.body || {};
+
+        if (!reference_number || !String(reference_number).trim()) {
+            return res.status(400).json({
+                success: false,
+                message: "Reference number is required",
+            });
+        }
+
+        const parsedOrderId = Number(orderId);
+        if (!Number.isInteger(parsedOrderId) || parsedOrderId <= 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid order ID",
+            });
+        }
+
+        const paymentResult = await pool.query(
+            `SELECT p.*, o.order_status
+             FROM payments p
+             JOIN orders o ON o.id = p.order_id
+             WHERE p.order_id = $1 AND p.user_id = $2
+             ORDER BY p.id DESC
+             LIMIT 1`,
+            [parsedOrderId, userId]
+        );
+
+        if (paymentResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Payment record not found for this order",
+            });
+        }
+
+        const payment = paymentResult.rows[0];
+
+        if (payment.status === "paid") {
+            return res.status(400).json({
+                success: false,
+                message: "This payment has already been marked as paid",
+            });
+        }
+
+        const cleanRef = String(reference_number).trim();
+
+        const updated = await pool.query(
+            `UPDATE payments
+             SET transaction_reference = $1,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = $2
+             RETURNING *`,
+            [cleanRef, payment.id]
+        );
+
+        res.json({
+            success: true,
+            message: "Payment reference submitted successfully",
+            payment: updated.rows[0],
+        });
+    } catch (error) {
+        console.error("Submit payment reference error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Server error",
+        });
+    }
+};
+
+const confirmOnlinePayment = async (req, res) => {
+    const client = await pool.connect();
+
+    try {
+        const { id } = req.params;
+        const parsedPaymentId = Number(id);
+
+        if (!Number.isInteger(parsedPaymentId) || parsedPaymentId <= 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid payment ID",
+            });
+        }
+
+        await client.query("BEGIN");
+
+        const paymentResult = await client.query(
+            `SELECT
+                p.*,
+                o.order_number,
+                u.first_name,
+                u.last_name,
+                u.email
+            FROM payments p
+            JOIN orders o ON o.id = p.order_id
+            JOIN users u ON u.id = p.user_id
+            WHERE p.id = $1
+            FOR UPDATE`,
+            [parsedPaymentId]
+        );
+
+        if (paymentResult.rows.length === 0) {
+            await client.query("ROLLBACK");
+            return res.status(404).json({
+                success: false,
+                message: "Payment not found",
+            });
+        }
+
+        const payment = paymentResult.rows[0];
+
+        if (payment.payment_method === "COD") {
+            await client.query("ROLLBACK");
+            return res.status(400).json({
+                success: false,
+                message: "COD payments cannot use online payment confirmation",
+            });
+        }
+
+        if (payment.status === "paid") {
+            await client.query("ROLLBACK");
+            return res.status(400).json({
+                success: false,
+                message: "Payment is already marked as paid",
+            });
+        }
+
+        const updatedPayment = await markOnlinePaymentAsPaid(
+            client,
+            payment,
+            {
+                transaction_reference: payment.transaction_reference || `MANUAL-${Date.now()}`,
+                gateway: "GCASH_MANUAL_VERIFY",
+                gateway_payment_id: `VERIFIED_BY_ADMIN_${req.user.id}`,
+            }
+        );
+
+        await client.query("COMMIT");
+
+        try {
+            sendEmail({
+                to: payment.email,
+                subject: `YOCANA Payment Confirmed - ${payment.order_number}`,
+                text: `Hi ${payment.first_name}, your GCash payment for order ${payment.order_number} has been verified and confirmed.`,
+                html: paymentSuccessfulTemplate({
+                    customer: payment,
+                    order: { order_number: payment.order_number },
+                    payment: updatedPayment,
+                }),
+            }).catch((error) => console.error("Payment confirmed email error:", error));
+        } catch (emailError) {
+            console.error("Payment confirmed email template error:", emailError);
+        }
+
+        res.json({
+            success: true,
+            message: "Online payment verified and confirmed successfully",
+            payment: updatedPayment,
+        });
+    } catch (error) {
+        await client.query("ROLLBACK");
+        console.error("Confirm online payment error:", error);
+        res.status(400).json({
+            success: false,
+            message: error.message || "Failed to confirm payment",
+        });
+    } finally {
+        client.release();
+    }
+};
+
 module.exports = {
     createPayment,
     getMyPayment,
@@ -806,4 +979,6 @@ module.exports = {
     simulateOnlinePaymentSuccess,
     getAdminPaymentByOrderId,
     getAdminPayments,
+    submitPaymentReference,
+    confirmOnlinePayment,
 };
