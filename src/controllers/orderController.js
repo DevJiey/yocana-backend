@@ -196,9 +196,9 @@ const createOrder = async (req, res) => {
             0
         );
 
-        // 2 bottles or more (or orders >= ₱2,998) gets FREE SHIPPING (₱0); otherwise Flat ₱50 nationwide
+        // 2 bottles or more (or orders >= ₱3,398) gets FREE SHIPPING (₱0); otherwise Flat ₱50 nationwide
         const shippingFee =
-            totalQuantity >= 2 || subtotal >= 2998
+            totalQuantity >= 2 || subtotal >= 3398
                 ? 0
                 : 50;
 
@@ -508,17 +508,46 @@ const getAllOrders = async (req, res) => {
             `SELECT
                 o.id,
                 o.order_number,
+                o.subtotal,
+                o.shipping_fee,
+                o.discount_amount,
                 o.total_amount,
                 o.payment_method,
                 o.payment_status,
                 o.order_status,
+                o.shipping_address,
                 o.shipping_region,
+                o.recipient_name,
+                o.recipient_phone,
+                o.shipping_address_line,
+                o.shipping_barangay,
+                o.shipping_city,
+                o.shipping_province,
+                o.shipping_postal_code,
+                o.courier_name,
+                o.tracking_number,
                 o.created_at,
                 u.first_name,
                 u.last_name,
-                u.email
+                u.email,
+                u.phone AS user_phone,
+                COALESCE(
+                    json_agg(
+                        json_build_object(
+                            'id', oi.id,
+                            'product_id', oi.product_id,
+                            'product_name', oi.product_name,
+                            'price', oi.price,
+                            'quantity', oi.quantity,
+                            'subtotal', oi.subtotal
+                        ) ORDER BY oi.id
+                    ) FILTER (WHERE oi.id IS NOT NULL),
+                    '[]'::json
+                ) AS items
              FROM orders o
              JOIN users u ON u.id = o.user_id
+             LEFT JOIN order_items oi ON oi.order_id = o.id
+             GROUP BY o.id, u.id
              ORDER BY o.created_at DESC`
         );
 

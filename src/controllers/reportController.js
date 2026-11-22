@@ -368,6 +368,55 @@ const getOrdersReport = async (req, res) => {
             values
         );
 
+        // ========================================
+        // DETAILED ORDERS LIST (FOR CSV EXPORT & AUDIT)
+        // ========================================
+        const ordersListResult = await pool.query(
+            `
+            SELECT
+                o.id,
+                o.order_number,
+                o.created_at,
+                u.first_name,
+                u.last_name,
+                u.email,
+                u.phone AS user_phone,
+                o.recipient_name,
+                o.recipient_phone,
+                o.order_status,
+                o.payment_method,
+                o.payment_status,
+                o.subtotal,
+                o.shipping_fee,
+                o.total_amount,
+                o.shipping_address,
+                o.shipping_address_line,
+                o.shipping_barangay,
+                o.shipping_city,
+                o.shipping_province,
+                o.shipping_postal_code,
+                COALESCE(
+                    json_agg(
+                        json_build_object(
+                            'id', oi.id,
+                            'product_name', oi.product_name,
+                            'quantity', oi.quantity,
+                            'price', oi.price,
+                            'subtotal', oi.subtotal
+                        ) ORDER BY oi.id
+                    ) FILTER (WHERE oi.id IS NOT NULL),
+                    '[]'::json
+                ) AS items
+            FROM orders o
+            JOIN users u ON u.id = o.user_id
+            LEFT JOIN order_items oi ON oi.order_id = o.id
+            ${whereClause}
+            GROUP BY o.id, u.id
+            ORDER BY o.created_at DESC
+            `,
+            values
+        );
+
         res.json({
             success: true,
 
@@ -403,6 +452,8 @@ const getOrdersReport = async (req, res) => {
                     order_date: row.order_date,
                     total_orders: Number(row.total_orders),
                 })),
+
+                list: ordersListResult.rows,
             },
         });
     } catch (error) {
