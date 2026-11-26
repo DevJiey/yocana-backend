@@ -26,12 +26,17 @@ const customerRoutes = require("./src/routes/customerRoutes");
 const addressRoutes = require("./src/routes/addressRoutes");
 const reportRoutes = require("./src/routes/reportRoutes");
 
+app.set("trust proxy", 1);
 app.use(helmet());
+const envOrigins = (process.env.FRONTEND_URL || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 const allowedOrigins = [
     "http://localhost:5173",
-     "http://localhost:8080",
-    process.env.FRONTEND_URL,
-].filter(Boolean);
+    "http://localhost:8080",
+    ...envOrigins,
+];
 
 app.use(
     cors({
