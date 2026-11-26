@@ -50,6 +50,17 @@ app.use(
     })
 );
 app.use(express.json({ limit: "1mb" }));
+const apiLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000,
+    limit: 120,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    message: {
+        success: false,
+        message: "Too many requests. Please slow down and try again shortly.",
+    },
+});
+
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 20,
@@ -71,6 +82,7 @@ const passwordResetLimiter = rateLimit({
         message: "Too many password reset attempts. Please try again later.",
     },
 });
+app.use("/api", apiLimiter);
 app.use("/api/auth/login", authLimiter);
 app.use("/api/auth/google", authLimiter);
 app.use("/api/auth/register", authLimiter);
